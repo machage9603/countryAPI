@@ -105,14 +105,14 @@ func formatDatabaseURL(url string) string {
 func initDB() {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		// Try POSTGRES_URL as fallback (for PostgreSQL)
+		// Try POSTGRES_URL as fallback
 		dsn = os.Getenv("POSTGRES_URL")
 	}
 	if dsn == "" {
 		log.Fatal("DATABASE_URL or POSTGRES_URL environment variable is required")
 	}
 
-	// Format the URL for GORM (will pass through unchanged for postgres://)
+	// For PostgreSQL, the DSN can be used as is
 	dsn = formatDatabaseURL(dsn)
 
 	var err error
@@ -161,22 +161,27 @@ func refreshCountries(c *gin.Context) {
 
 		// Handle currency
 		if len(rc.Currencies) > 0 && rc.Currencies[0] != nil {
-			for code := range rc.Currencies[0] {
+			if code, ok := rc.Currencies[0]["code"]; ok && code != "" {
 				country.CurrencyCode = &code
-				break
 			}
+		}
 
-			// Get exchange rate
-			if country.CurrencyCode != nil {
-				if rate, ok := rates[*country.CurrencyCode]; ok {
-					country.ExchangeRate = &rate
+		// Get exchange rate if currency code exists
+		if country.CurrencyCode != nil {
+			if rate, ok := rates[*country.CurrencyCode]; ok {
+				country.ExchangeRate = &rate
 
-					// Calculate estimated GDP
-					multiplier := rand.Float64()*(2000-1000) + 1000
-					gdp := float64(country.Population) * multiplier / rate
-					country.EstimatedGDP = &gdp
-				}
+				// Calculate estimated GDP
+				multiplier := rand.Float64()*(2000-1000) + 1000
+				gdp := float64(country.Population) * multiplier / rate
+				country.EstimatedGDP = &gdp
+			} else {
+				// Rate not found, exchange_rate null (already nil), estimated_gdp null
 			}
+		} else {
+			// No currency, set estimated_gdp to 0
+			zero := 0.0
+			country.EstimatedGDP = &zero
 		}
 
 		// Update or create
@@ -219,9 +224,9 @@ func getCountries(c *gin.Context) {
 	sort := c.Query("sort")
 	switch sort {
 	case "gdp_desc":
-		query = query.Order("estimated_gdp DESC")
+		query = query.Order("estimated_gdp DESC NULLS LAST")
 	case "gdp_asc":
-		query = query.Order("estimated_gdp ASC")
+		query = query.Order("estimated_gdp ASC NULLS FIRST")
 	case "population_desc":
 		query = query.Order("population DESC")
 	case "population_asc":
@@ -264,7 +269,7 @@ func getStatus(c *gin.Context) {
 	var lastRefresh time.Time
 
 	db.Model(&Country{}).Count(&count)
-	db.Model(&Country{}).Select("MAX(last_refreshed_at)").Scan(&lastRefresh)
+	db.Model(&Country{}).Select("COALESCE(MAX(last_refreshed_at), '0001-01-01T00:00:00Z')").Scan(&lastRefresh)
 
 	c.JSON(http.StatusOK, gin.H{
 		"total_countries":   count,
@@ -335,7 +340,7 @@ func generateSummaryImage() error {
 
 	// Get last refresh time
 	var lastRefresh time.Time
-	db.Model(&Country{}).Select("MAX(last_refreshed_at)").Scan(&lastRefresh)
+	db.Model(&Country{}).Select("COALESCE(MAX(last_refreshed_at), '0001-01-01T00:00:00Z')").Scan(&lastRefresh)
 
 	// Create image
 	img := image.NewRGBA(image.Rect(0, 0, 800, 600))
