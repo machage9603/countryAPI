@@ -106,3 +106,4 @@ All responses are in JSON format unless specified.
 "flag_url": "https://flagcdn.com/ng.svg",
 "last_refreshed_at": "2025-10-28T12:00:00Z"
 }
+
